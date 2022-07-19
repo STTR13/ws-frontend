@@ -1,0 +1,10 @@
+{
+  "name": "star-wars-elm-graphql-project",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@dillonkearns/elm-graphql": "^4.2.4"
+  },
+  "scripts": {
+    "regen-graphql": "npx elm-graphql http://54.77.14.151:8080/query --base API"
+  }
+}
