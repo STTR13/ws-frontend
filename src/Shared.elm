@@ -1,13 +1,6 @@
-module Shared exposing
-    ( Flags
-    , Model
-    , Msg
-    , User
-    , init
-    , subscriptions
-    , update
-    )
+module Shared exposing (..)
 
+import Email exposing (Email)
 import Json.Decode as Json
 import Request exposing (Request)
 
@@ -16,12 +9,19 @@ type alias Flags =
     Json.Value
 
 
+{-| TODO give through flags
+-}
+apiUrl : String
+apiUrl =
+    "http://54.77.14.151:8080"
+
+
 type alias Model =
     { user : Maybe User }
 
 
 type alias User =
-    { email : String
+    { email : Email
     , auth : String
     }
 
