@@ -4,9 +4,10 @@ import API.Object.Error
 import API.Object.Token
 import API.Query
 import API.Union.LoginRes
+import Effect exposing (Effect)
 import Element exposing (Element)
 import Email exposing (Email)
-import Form exposing (Form)
+import Form
 import Form.View
 import Graphql.Http
 import Graphql.Http.GraphqlError
@@ -31,34 +32,61 @@ type Msg
     | GraphqlError (List Graphql.Http.GraphqlError.GraphqlError)
 
 
-init : ( Model, Cmd Msg )
+init : ( Model, Effect Msg )
 init =
     ( { formModel = Form.View.idle { email = "", password = "" } }
-    , Cmd.none
+    , Effect.none
     )
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
     case msg of
         FormUpdate newFormModel ->
             { model | formModel = newFormModel }
-                |> Tuple.Extra.pairWith Cmd.none
+                |> Tuple.Extra.pairWith Effect.none
 
         FormSubmit formOutput ->
-            ( model, toQuery formOutput )
+            { model
+                | formModel = setState Form.View.Loading model.formModel
+            }
+                |> Tuple.Extra.pairWith (Effect.fromCmd <| toQuery formOutput)
 
         LogInSuccess user ->
-            ( model, Cmd.none )
+            let
+                message =
+                    "You're logged in!"
+            in
+            { model
+                | formModel = setState (Form.View.Success message) model.formModel
+            }
+                |> Tuple.Extra.pairWith (Effect.fromShared <| Shared.LogIn user)
 
-        ServerError { code, message } ->
-            ( model, Cmd.none )
+        ServerError { message } ->
+            { model
+                | formModel = setState (Form.View.Error message) model.formModel
+            }
+                |> Tuple.Extra.pairWith Effect.none
 
-        HttpError _ ->
-            ( model, Cmd.none )
+        HttpError httpErr ->
+            let
+                message =
+                    httpErrorToHumanReadableString httpErr
+            in
+            { model
+                | formModel = setState (Form.View.Error message) model.formModel
+            }
+                |> Tuple.Extra.pairWith Effect.none
 
         GraphqlError _ ->
-            ( model, Cmd.none )
+            let
+                message =
+                    "There is an issue in the program (graphql).\nPlease post an issue on github"
+            in
+            { model
+                | formModel = setState (Form.View.Error message) model.formModel
+            }
+                |> Tuple.Extra.pairWith Effect.none
 
 
 view : Model -> View Msg
@@ -69,13 +97,13 @@ view model =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions model =
+subscriptions _ =
     Sub.none
 
 
 page : Shared.Model -> Request -> Page.With Model Msg
-page shared req =
-    Page.element
+page _ _ =
+    Page.advanced
         { init = init
         , update = update
         , view = view
@@ -150,6 +178,11 @@ viewForm formModel =
         |> Element.html
 
 
+setState : Form.View.State -> FormModel -> FormModel
+setState newState formModel =
+    { formModel | state = newState }
+
+
 
 --  █████╗ ██████╗ ██╗
 -- ██╔══██╗██╔══██╗██║
@@ -180,7 +213,7 @@ toQuery { email, password } =
             { onToken =
                 Graphql.SelectionSet.map
                     (\token ->
-                        LogInSuccess { email = email, auth = token }
+                        LogInSuccess { email = email, token = token }
                     )
                     API.Object.Token.token
             , onError =
@@ -194,3 +227,16 @@ toQuery { email, password } =
         )
         |> Graphql.Http.queryRequest Shared.apiUrl
         |> Graphql.Http.send handleHttpErrors
+
+
+httpErrorToHumanReadableString : Graphql.Http.HttpError -> String
+httpErrorToHumanReadableString httpErr =
+    case httpErr of
+        Graphql.Http.Timeout ->
+            "The communication with the server timed out.\nPlease make sure your internet connection is working properly"
+
+        Graphql.Http.NetworkError ->
+            "There was an issue when we tried reaching to the server.\nPlease make sure your internet connection is working properly"
+
+        _ ->
+            "There is an issue in the program (http).\nPlease post an issue on github"

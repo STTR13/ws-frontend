@@ -13,7 +13,7 @@ type alias Flags =
 -}
 apiUrl : String
 apiUrl =
-    "http://54.77.14.151:8080"
+    "http://54.77.14.151:8080/query"
 
 
 type alias Model =
@@ -22,12 +22,13 @@ type alias Model =
 
 type alias User =
     { email : Email
-    , auth : String
+    , token : String
     }
 
 
 type Msg
-    = NoOp
+    = LogIn User
+    | LogOut
 
 
 init : Request -> Flags -> ( Model, Cmd Msg )
@@ -38,8 +39,11 @@ init _ _ =
 update : Request -> Msg -> Model -> ( Model, Cmd Msg )
 update _ msg model =
     case msg of
-        NoOp ->
-            ( model, Cmd.none )
+        LogIn user ->
+            ( { model | user = Just user }, Cmd.none )
+
+        LogOut ->
+            ( { model | user = Nothing }, Cmd.none )
 
 
 subscriptions : Request -> Model -> Sub Msg
