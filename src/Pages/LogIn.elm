@@ -4,6 +4,7 @@ import API.Object.Error
 import API.Object.Token
 import API.Query
 import API.Union.LoginRes
+import APIError
 import Color
 import Effect exposing (Effect)
 import Element exposing (Element)
@@ -11,14 +12,15 @@ import Element.Background
 import Element.Border
 import Element.Font
 import Element.Input
+import Element.Pipe
 import Email exposing (Email)
 import Form exposing (Form)
 import Graphql.Http
-import Graphql.Http.GraphqlError
 import Graphql.SelectionSet
 import Html.Attributes
 import Html.Events
 import Json.Decode as Decode
+import List.Extra
 import Material.Icons
 import Material.Icons.Types
 import Page
@@ -32,26 +34,22 @@ import View exposing (View)
 
 type alias Model =
     { formState : FormState
-    , errorState : Maybe Error
+    , formOutput : Maybe FormOutput
+    , errorState : Maybe APIError.Error
     }
-
-
-type Error
-    = ServerError { code : Int, message : String }
-    | HttpError Graphql.Http.HttpError
-    | GraphqlError (List Graphql.Http.GraphqlError.GraphqlError)
 
 
 type Msg
     = FormUpdate FormMsg
     | LogInSuccess Shared.User
-    | LogInError Error
+    | LogInError APIError.Error
     | CloseError
 
 
 init : ( Model, Effect Msg )
 init =
     ( { formState = initFormState
+      , formOutput = Nothing
       , errorState = Nothing
       }
     , Effect.none
@@ -63,19 +61,21 @@ update msg model =
     case msg of
         FormUpdate formMsg ->
             let
+                form =
+                    toForm model
+
                 ( newFormState, maybeOutput ) =
-                    form.update formMsg model.formState
-                        |> Debug.log "fromOut"
+                    Form.update form formMsg model.formState
 
                 effect =
-                    case maybeOutput of
-                        Just output ->
+                    case ( formMsg, maybeOutput ) of
+                        ( Submit, Just output ) ->
                             Effect.fromCmd <| toQuery output
 
-                        Nothing ->
+                        _ ->
                             Effect.none
             in
-            { model | formState = newFormState }
+            { model | formState = newFormState, formOutput = maybeOutput }
                 |> Tuple.Extra.pairWith effect
 
         LogInSuccess user ->
@@ -83,7 +83,8 @@ update msg model =
                 |> Tuple.Extra.pairWith (Effect.fromShared <| Shared.LogIn user)
 
         LogInError error ->
-            { model | errorState = Just error }
+            
+            { model | errorState = Just (error |> Debug.log "err") }
                 |> Tuple.Extra.pairWith Effect.none
 
         CloseError ->
@@ -94,6 +95,9 @@ update msg model =
 view : Model -> View Msg
 view model =
     let
+        form =
+            toForm model
+
         fillAttr =
             [ Element.width Element.fill
             , Element.height Element.fill
@@ -113,7 +117,7 @@ view model =
                             [ Element.centerY
                             , Element.Font.color (Element.rgb 1 1 1)
                             ]
-                            (errorToText error |> Element.text)
+                            (APIError.toText error |> Element.text)
                         , Element.Input.button
                             [ Element.Background.color (Element.rgb 0.95 0 0)
                             , Element.Border.rounded 3
@@ -128,16 +132,14 @@ view model =
                             }
                         ]
     in
-    { title = "sign in"
+    { title = "log-in"
     , body =
         Element.column fillAttr
             [ errorPopup
-            , Element.column
-                [ Element.centerX
-                , Element.centerY
-                , Element.spacing 10
-                ]
-                (form.view model.formState)
+            , Form.view form model.formState
+                |> Element.Pipe.addAttribute Element.centerX
+                |> Element.Pipe.addAttribute Element.centerY
+                |> Element.Pipe.toElement
                 |> Element.map FormUpdate
                 |> Element.el fillAttr
             ]
@@ -169,14 +171,23 @@ page _ _ =
 
 
 type alias FormState =
-    { email : Form.FieldState String String
-    , password : Form.FieldState Never String
-    }
+    Form.State (List FormError) FormValue Form.Void
 
 
 initFormState =
-    { email = { value = "", error = Nothing }
-    , password = { value = "", error = Nothing }
+    { value = { email = "", password = "" }
+    , error = Nothing
+    , animation = Form.Void
+    }
+
+
+type FormError
+    = EmailError String
+
+
+type alias FormValue =
+    { email : String
+    , password : String
     }
 
 
@@ -192,100 +203,107 @@ type alias FormOutput =
     }
 
 
-form : Form FormState FormMsg FormOutput
-form =
+toForm : Model -> Form (List FormError) FormValue Form.Void FormMsg FormOutput
+toForm model =
     let
-        emailField : Form.Field String String Email
-        emailField =
-            { parse = Email.fromString >> Result.fromMaybe "invalid email"
-            , transform = identity
-            , view =
-                \{ value, error } ->
-                    Element.Input.email
-                        [ if error == Nothing then
-                            noneAttribute
+        emailForm : Form (List FormError) FormValue Form.Void FormMsg Email
+        emailForm =
+            Form.simple
+                { parse = Email.fromString >> Result.fromMaybe "invalid email"
+                , view =
+                    \{ value, error } ->
+                        Element.Input.email
+                            [ if error == Nothing then
+                                noneAttribute
 
-                          else
-                            Element.Border.color (Element.rgb 1 0 0)
-                        ]
-                        { onChange = identity
-                        , text = value
-                        , placeholder = Element.Input.placeholder [] (Element.text "your@email.com") |> Just
-                        , label = Element.Input.labelAbove [] (Element.text "Email")
-                        }
-            }
-
-        emailInterface : Form.Interface FormState FormMsg String String
-        emailInterface =
-            { fieldState =
-                { get = .email
-                , insert = \fieldState formState -> { formState | email = fieldState }
+                              else
+                                Element.Border.color (Element.rgb 1 0 0)
+                            ]
+                            { onChange = identity
+                            , text = value
+                            , placeholder = Element.Input.placeholder [] (Element.text "your@email.com") |> Just
+                            , label = Element.Input.labelAbove [] (Element.text "Email")
+                            }
+                            |> Element.Pipe.singleton
                 }
-            , msg =
-                { fromValue = TypeEmail
-                , toValue =
-                    \msg ->
+                |> Form.mapError
+                    ( EmailError >> List.singleton
+                    , List.Extra.findMap
+                        (\err ->
+                            case err of
+                                EmailError str ->
+                                    Just str
+                        )
+                    )
+                |> Form.mapMsg
+                    ( TypeEmail
+                    , \msg ->
                         case msg of
-                            TypeEmail val ->
-                                Just val
+                            TypeEmail str ->
+                                Just str
 
                             _ ->
                                 Nothing
-                }
-            }
+                    )
+                |> Form.mapValue ( \newVal value -> { value | email = newVal }, .email )
 
-        passwordField : Form.Field Never String String
-        passwordField =
-            { parse = Ok
-            , transform = identity
-            , view =
-                \{ value } ->
-                    Element.Input.currentPassword
-                        []
-                        { onChange = identity
-                        , text = value
-                        , placeholder = Element.Input.placeholder [] (Element.text "yourPassword") |> Just
-                        , label = Element.Input.labelAbove [] (Element.text "Password")
-                        , show = False
-                        }
-            }
-
-        passwordInterface : Form.Interface FormState FormMsg Never String
-        passwordInterface =
-            { fieldState = { get = .password, insert = \fieldState formState -> { formState | password = fieldState } }
-            , msg =
-                { fromValue = TypePassword
-                , toValue =
-                    \msg ->
+        passwordForm : Form (List FormError) FormValue Form.Void FormMsg String
+        passwordForm =
+            Form.complex
+                { parse = Ok
+                , transform =
+                    \msg { value } ->
                         case msg of
-                            TypePassword val ->
-                                Just val
+                            TypePassword str ->
+                                str
 
                             _ ->
-                                Nothing
+                                value
+                , view =
+                    \{ value } ->
+                        Element.Input.currentPassword
+                            [ onEnter Submit ]
+                            { onChange = TypePassword
+                            , text = value
+                            , placeholder = Element.Input.placeholder [] (Element.text "yourPassword") |> Just
+                            , label = Element.Input.labelAbove [] (Element.text "Password")
+                            , show = False
+                            }
+                            |> Element.Pipe.singleton
                 }
-            }
+                |> Form.mapValue ( \newVal value -> { value | password = newVal }, .password )
+
+        form_ : Form (List FormError) FormValue Form.Void FormMsg FormOutput
+        form_ =
+            Form.succeed Element.Pipe.Column FormOutput
+                |> Form.append emailForm
+                |> Form.append passwordForm
 
         submitButton =
-            { isSubmit = (==) Submit
-            , view =
-                Element.Input.button
-                    [ Element.alignRight
-                    , Element.padding 7
-                    , Element.Background.color (Element.rgb 0.85 0 0)
-                    , Element.Font.color (Element.rgb 1 1 1)
-                    , Element.Font.bold
-                    , Element.Border.rounded 3
-                    ]
-                    { onPress = Just Submit
-                    , label = Element.text "Submit"
-                    }
-            }
+            Element.Input.button
+                [ Element.alignRight
+                , Element.padding 7
+                , Element.Background.color
+                    (if model.formOutput == Nothing then
+                        Element.rgb 0.6 0.6 0.6
+
+                     else
+                        Element.rgb 0.85 0 0
+                    )
+                , Element.Font.color (Element.rgb 1 1 1)
+                , Element.Font.bold
+                , Element.Border.rounded 3
+                ]
+                { onPress = Just Submit
+                , label = Element.text "Submit"
+                }
     in
-    Form.succeed FormOutput
-        |> Form.append (Form.toForm emailInterface emailField)
-        |> Form.append (Form.toForm passwordInterface passwordField)
-        |> Form.appendSubmitButton submitButton
+    { form_
+        | view =
+            form_.view
+                >> Element.Pipe.addAttribute (Element.spacing 10)
+                >> Element.Pipe.append submitButton
+    }
 
 
 
@@ -307,10 +325,10 @@ toQuery { email, password } =
                     msg
 
                 Err (Graphql.Http.HttpError error) ->
-                    HttpError error |> LogInError
+                    APIError.Http error |> LogInError
 
                 Err (Graphql.Http.GraphqlError _ errors) ->
-                    GraphqlError errors |> LogInError
+                    APIError.Graphql errors |> LogInError
     in
     API.Query.login
         { id = Email.toString email, pwd = password }
@@ -324,7 +342,7 @@ toQuery { email, password } =
             , onError =
                 Graphql.SelectionSet.map2
                     (\code message ->
-                        ServerError { code = code, message = message }
+                        APIError.Server { code = code, message = message }
                             |> LogInError
                     )
                     API.Object.Error.code
@@ -342,27 +360,6 @@ toQuery { email, password } =
 -- ██║   ██║   ██║   ██║██║
 -- ╚██████╔╝   ██║   ██║███████╗
 --  ╚═════╝    ╚═╝   ╚═╝╚══════╝
-
-
-errorToText : Error -> String
-errorToText error =
-    case error of
-        ServerError { message } ->
-            message
-
-        GraphqlError _ ->
-            "There is an issue in the program (graphql).\nPlease post an issue on github"
-
-        HttpError httpErr ->
-            case httpErr of
-                Graphql.Http.Timeout ->
-                    "The communication with the server timed out.\nPlease make sure your internet connection is working properly"
-
-                Graphql.Http.NetworkError ->
-                    "There was an issue when we tried reaching to the server.\nPlease make sure your internet connection is working properly"
-
-                _ ->
-                    "There is an issue in the program (http).\nPlease post an issue on github"
 
 
 noneAttribute : Element.Attribute msg

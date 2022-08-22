@@ -5,6 +5,6 @@
     "@dillonkearns/elm-graphql": "^4.2.4"
   },
   "scripts": {
-    "regen-graphql": "npx elm-graphql http://54.77.14.151:8080/query --base API"
+    "api": "npx elm-graphql http://localhost:8080/query --base API"
   }
 }

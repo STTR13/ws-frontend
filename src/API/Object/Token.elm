@@ -35,3 +35,9 @@ token =
 userId : SelectionSet String API.Object.Token
 userId =
     Object.selectionForField "String" "userId" [] Decode.string
+
+
+{-| -}
+isAdmin : SelectionSet Bool API.Object.Token
+isAdmin =
+    Object.selectionForField "Bool" "isAdmin" [] Decode.bool

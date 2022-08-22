@@ -13,7 +13,8 @@ type alias Flags =
 -}
 apiUrl : String
 apiUrl =
-    "http://54.77.14.151:8080/query"
+    -- "http://54.77.14.151:8080/query"
+    "http://localhost:8080/query"
 
 
 type alias Model =
