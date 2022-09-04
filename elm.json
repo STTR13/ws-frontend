@@ -8,6 +8,7 @@
     "elm-version": "0.19.1",
     "dependencies": {
         "direct": {
+            "SiriusStarr/elm-password-strength": "1.0.2",
             "avh4/elm-color": "1.0.0",
             "bellroy/elm-email": "1.0.0",
             "dillonkearns/elm-graphql": "5.0.10",
@@ -31,6 +32,7 @@
             "elm/regex": "1.0.0",
             "elm/time": "1.0.0",
             "elm/virtual-dom": "1.0.2",
+            "elm-community/dict-extra": "2.4.0",
             "j-maas/elm-ordered-containers": "1.0.0",
             "lukewestby/elm-string-interpolate": "1.0.4"
         }

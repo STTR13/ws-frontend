@@ -7,20 +7,17 @@ import API.Union.LoginRes
 import APIError
 import Color
 import Effect exposing (Effect)
-import Element exposing (Element)
+import Element
 import Element.Background
 import Element.Border
 import Element.Font
 import Element.Input
-import Element.Pipe
 import Email exposing (Email)
 import Form exposing (Form)
+import Form.CurrentPassword
+import Form.Email
 import Graphql.Http
 import Graphql.SelectionSet
-import Html.Attributes
-import Html.Events
-import Json.Decode as Decode
-import List.Extra
 import Material.Icons
 import Material.Icons.Types
 import Page
@@ -30,6 +27,7 @@ import Svg
 import Svg.Attributes
 import Tuple.Extra
 import View exposing (View)
+import Void exposing (..)
 
 
 type alias Model =
@@ -83,7 +81,6 @@ update msg model =
                 |> Tuple.Extra.pairWith (Effect.fromShared <| Shared.LogIn user)
 
         LogInError error ->
-            
             { model | errorState = Just (error |> Debug.log "err") }
                 |> Tuple.Extra.pairWith Effect.none
 
@@ -136,10 +133,13 @@ view model =
     , body =
         Element.column fillAttr
             [ errorPopup
-            , Form.view form model.formState
-                |> Element.Pipe.addAttribute Element.centerX
-                |> Element.Pipe.addAttribute Element.centerY
-                |> Element.Pipe.toElement
+            , form.view model.formState
+                |> Element.column
+                    [ Element.centerX
+                    , Element.centerY
+                    , Element.spacing 10
+                    , Element.width (Element.px 300)
+                    ]
                 |> Element.map FormUpdate
                 |> Element.el fillAttr
             ]
@@ -171,13 +171,13 @@ page _ _ =
 
 
 type alias FormState =
-    Form.State (List FormError) FormValue Form.Void
+    Form.State FormError FormValue Void
 
 
 initFormState =
     { value = { email = "", password = "" }
-    , error = Nothing
-    , animation = Form.Void
+    , error = []
+    , animation = Void
     }
 
 
@@ -203,79 +203,68 @@ type alias FormOutput =
     }
 
 
-toForm : Model -> Form (List FormError) FormValue Form.Void FormMsg FormOutput
+toForm : Model -> Form FormError FormValue Void FormMsg FormOutput
 toForm model =
     let
-        emailForm : Form (List FormError) FormValue Form.Void FormMsg Email
+        emailForm : Form FormError FormValue Void FormMsg Email
         emailForm =
-            Form.simple
-                { parse = Email.fromString >> Result.fromMaybe "invalid email"
-                , view =
-                    \{ value, error } ->
-                        Element.Input.email
-                            [ if error == Nothing then
-                                noneAttribute
-
-                              else
-                                Element.Border.color (Element.rgb 1 0 0)
-                            ]
-                            { onChange = identity
-                            , text = value
-                            , placeholder = Element.Input.placeholder [] (Element.text "your@email.com") |> Just
-                            , label = Element.Input.labelAbove [] (Element.text "Email")
-                            }
-                            |> Element.Pipe.singleton
-                }
+            Form.Email.form
+                |> Form.mapValue ( \newVal value -> { value | email = newVal }, .email )
                 |> Form.mapError
-                    ( EmailError >> List.singleton
-                    , List.Extra.findMap
-                        (\err ->
-                            case err of
-                                EmailError str ->
-                                    Just str
-                        )
+                    ( EmailError
+                    , \err ->
+                        case err of
+                            EmailError str ->
+                                Just str
                     )
                 |> Form.mapMsg
-                    ( TypeEmail
+                    ( \msg ->
+                        case msg of
+                            Form.Email.Type str ->
+                                TypeEmail str
+
+                            Form.Email.Enter ->
+                                Submit
                     , \msg ->
                         case msg of
                             TypeEmail str ->
-                                Just str
+                                Just (Form.Email.Type str)
+
+                            Submit ->
+                                Just Form.Email.Enter
 
                             _ ->
                                 Nothing
                     )
-                |> Form.mapValue ( \newVal value -> { value | email = newVal }, .email )
 
-        passwordForm : Form (List FormError) FormValue Form.Void FormMsg String
+        passwordForm : Form FormError FormValue Void FormMsg String
         passwordForm =
-            Form.complex
-                { parse = Ok
-                , transform =
-                    \msg { value } ->
+            Form.CurrentPassword.form
+                |> Form.mapValue ( \newVal value -> { value | password = newVal }, .password )
+                |> Form.mapError ( always (EmailError ""), always Nothing )
+                |> Form.mapMsg
+                    ( \msg ->
+                        case msg of
+                            Form.CurrentPassword.Type str ->
+                                TypePassword str
+
+                            Form.CurrentPassword.Enter ->
+                                Submit
+                    , \msg ->
                         case msg of
                             TypePassword str ->
-                                str
+                                Just (Form.CurrentPassword.Type str)
+
+                            Submit ->
+                                Just Form.CurrentPassword.Enter
 
                             _ ->
-                                value
-                , view =
-                    \{ value } ->
-                        Element.Input.currentPassword
-                            [ onEnter Submit ]
-                            { onChange = TypePassword
-                            , text = value
-                            , placeholder = Element.Input.placeholder [] (Element.text "yourPassword") |> Just
-                            , label = Element.Input.labelAbove [] (Element.text "Password")
-                            , show = False
-                            }
-                            |> Element.Pipe.singleton
-                }
-                |> Form.mapValue ( \newVal value -> { value | password = newVal }, .password )
+                                Nothing
+                    )
 
-        form_ : Form (List FormError) FormValue Form.Void FormMsg FormOutput
+        form_ : Form FormError FormValue Void FormMsg FormOutput
         form_ =
-            Form.succeed Element.Pipe.Column FormOutput
+            Form.succeed FormOutput
                 |> Form.append emailForm
                 |> Form.append passwordForm
 
@@ -295,15 +284,10 @@ toForm model =
                 , Element.Border.rounded 3
                 ]
                 { onPress = Just Submit
-                , label = Element.text "Submit"
+                , label = Element.text "Log In"
                 }
     in
-    { form_
-        | view =
-            form_.view
-                >> Element.Pipe.addAttribute (Element.spacing 10)
-                >> Element.Pipe.append submitButton
-    }
+    { form_ | view = \state -> form_.view state ++ [ submitButton ] }
 
 
 
@@ -351,34 +335,3 @@ toQuery { email, password } =
         )
         |> Graphql.Http.queryRequest Shared.apiUrl
         |> Graphql.Http.send handleHttpErrors
-
-
-
--- ██╗   ██╗████████╗██╗██╗
--- ██║   ██║╚══██╔══╝██║██║
--- ██║   ██║   ██║   ██║██║
--- ██║   ██║   ██║   ██║██║
--- ╚██████╔╝   ██║   ██║███████╗
---  ╚═════╝    ╚═╝   ╚═╝╚══════╝
-
-
-noneAttribute : Element.Attribute msg
-noneAttribute =
-    Element.htmlAttribute (Html.Attributes.classList [])
-
-
-onEnter : msg -> Element.Attribute msg
-onEnter msg =
-    Element.htmlAttribute
-        (Html.Events.on "keyup"
-            (Decode.field "key" Decode.string
-                |> Decode.andThen
-                    (\key ->
-                        if key == "Enter" then
-                            Decode.succeed msg
-
-                        else
-                            Decode.fail "Not the enter key"
-                    )
-            )
-        )
