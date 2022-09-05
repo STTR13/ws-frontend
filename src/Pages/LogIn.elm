@@ -25,9 +25,9 @@ import Request exposing (Request)
 import Shared
 import Svg
 import Svg.Attributes
+import TabIndex
 import Tuple.Extra
 import View exposing (View)
-import Void exposing (..)
 
 
 type alias Model =
@@ -69,6 +69,9 @@ update msg model =
                     case ( formMsg, maybeOutput ) of
                         ( Submit, Just output ) ->
                             Effect.fromCmd <| toQuery output
+
+                        ( FocusNext, _ ) ->
+                            Effect.fromCmd <| TabIndex.focusNext ()
 
                         _ ->
                             Effect.none
@@ -171,13 +174,13 @@ page _ _ =
 
 
 type alias FormState =
-    Form.State FormError FormValue Void
+    Form.State FormError FormValue ()
 
 
 initFormState =
     { value = { email = "", password = "" }
     , error = []
-    , animation = Void
+    , animation = ()
     }
 
 
@@ -194,6 +197,7 @@ type alias FormValue =
 type FormMsg
     = TypeEmail String
     | TypePassword String
+    | FocusNext
     | Submit
 
 
@@ -203,10 +207,10 @@ type alias FormOutput =
     }
 
 
-toForm : Model -> Form FormError FormValue Void FormMsg FormOutput
+toForm : Model -> Form FormError FormValue () FormMsg FormOutput
 toForm model =
     let
-        emailForm : Form FormError FormValue Void FormMsg Email
+        emailForm : Form FormError FormValue () FormMsg Email
         emailForm =
             Form.Email.form
                 |> Form.mapValue ( \newVal value -> { value | email = newVal }, .email )
@@ -220,24 +224,21 @@ toForm model =
                 |> Form.mapMsg
                     ( \msg ->
                         case msg of
-                            Form.Email.Type str ->
+                            Form.Email.NewVal str ->
                                 TypeEmail str
 
-                            Form.Email.Enter ->
-                                Submit
+                            Form.Email.OnEnter ->
+                                FocusNext
                     , \msg ->
                         case msg of
                             TypeEmail str ->
-                                Just (Form.Email.Type str)
-
-                            Submit ->
-                                Just Form.Email.Enter
+                                Just (Form.Email.NewVal str)
 
                             _ ->
                                 Nothing
                     )
 
-        passwordForm : Form FormError FormValue Void FormMsg String
+        passwordForm : Form FormError FormValue () FormMsg String
         passwordForm =
             Form.CurrentPassword.form
                 |> Form.mapValue ( \newVal value -> { value | password = newVal }, .password )
@@ -245,28 +246,19 @@ toForm model =
                 |> Form.mapMsg
                     ( \msg ->
                         case msg of
-                            Form.CurrentPassword.Type str ->
+                            Form.CurrentPassword.NewVal str ->
                                 TypePassword str
 
-                            Form.CurrentPassword.Enter ->
+                            Form.CurrentPassword.OnEnter ->
                                 Submit
                     , \msg ->
                         case msg of
                             TypePassword str ->
-                                Just (Form.CurrentPassword.Type str)
-
-                            Submit ->
-                                Just Form.CurrentPassword.Enter
+                                Just (Form.CurrentPassword.NewVal str)
 
                             _ ->
                                 Nothing
                     )
-
-        form_ : Form FormError FormValue Void FormMsg FormOutput
-        form_ =
-            Form.succeed FormOutput
-                |> Form.append emailForm
-                |> Form.append passwordForm
 
         submitButton =
             Element.Input.button
@@ -283,11 +275,19 @@ toForm model =
                 , Element.Font.bold
                 , Element.Border.rounded 3
                 ]
-                { onPress = Just Submit
+                { onPress =
+                    if model.formOutput == Nothing then
+                        Nothing
+
+                    else
+                        Just Submit
                 , label = Element.text "Log In"
                 }
     in
-    { form_ | view = \state -> form_.view state ++ [ submitButton ] }
+    Form.succeed FormOutput
+        |> Form.append emailForm
+        |> Form.append passwordForm
+        |> (\form -> { form | view = \state -> form.view state ++ [ submitButton ] })
 
 
 

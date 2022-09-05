@@ -3,7 +3,6 @@ module Form exposing (..)
 import Element exposing (Element)
 import List.Extra
 import NeList exposing (NeList)
-import Void exposing (..)
 
 
 type alias Form error value animation msg output =
@@ -49,7 +48,7 @@ simple :
     { parse : value -> Result error output
     , view : SimplifiedState error value -> Element value
     }
-    -> Form error value Void value output
+    -> Form error value () value output
 simple form =
     { parse = form.parse >> Result.mapError NeList.singleton
     , transform = \value _ -> value
@@ -66,7 +65,7 @@ complex :
     , transform : msg -> SimplifiedState error value -> value
     , view : SimplifiedState error value -> Element msg
     }
-    -> Form error value Void msg output
+    -> Form error value () msg output
 complex form =
     { parse = form.parse >> Result.mapError NeList.singleton
     , transform = form.transform
@@ -140,9 +139,36 @@ animate form state =
 -- ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝
 
 
+constrain : (value -> Maybe error) -> Form error value animation msg output -> Form error value animation msg output
+constrain func form =
+    { parse =
+        \value ->
+            case func value of
+                Nothing ->
+                    form.parse value
+
+                Just error ->
+                    form.parse value
+                        |> Result.mapError (NeList.appendWith <| NeList.singleton error)
+                        |> Result.andThen (always (Err <| NeList.singleton error))
+    , transform = form.transform
+    , animate = form.animate
+    , view = form.view
+    }
+
+
 map : (a -> b) -> Form error value animation msg a -> Form error value animation msg b
 map func form =
     { parse = form.parse >> Result.map func
+    , transform = form.transform
+    , animate = form.animate
+    , view = form.view
+    }
+
+
+andThen : (a -> Result error b) -> Form error value animation msg a -> Form error value animation msg b
+andThen func form =
+    { parse = form.parse >> Result.andThen (func >> Result.mapError NeList.singleton)
     , transform = form.transform
     , animate = form.animate
     , view = form.view
@@ -281,20 +307,20 @@ append formA formB =
 
 
 add :
-    Form error value animation msg Void
-    -> Form error value animation msg a
-    -> Form error value animation msg a
+    Form error value animation msg ()
+    -> Form error value animation msg output
+    -> Form error value animation msg output
 add formA formB =
     { parse =
         \value ->
             case ( formA.parse value, formB.parse value ) of
-                ( Ok Void, Ok b ) ->
+                ( Ok (), Ok b ) ->
                     Ok b
 
                 ( Err err, Ok _ ) ->
                     Err err
 
-                ( Ok Void, Err err ) ->
+                ( Ok (), Err err ) ->
                     Err err
 
                 ( Err errA, Err errB ) ->

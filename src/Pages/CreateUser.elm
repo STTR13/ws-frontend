@@ -14,11 +14,10 @@ import Element.Font
 import Element.Input
 import Email exposing (Email)
 import Form exposing (Form)
+import Form.Email
+import Form.NewPassword
 import Graphql.Http
 import Graphql.SelectionSet
-import Html.Attributes
-import Html.Events
-import Json.Decode as Decode
 import Material.Icons as Icon
 import Material.Icons.Types as Icon_Color
 import Page
@@ -26,9 +25,9 @@ import Request exposing (Request)
 import Shared
 import Svg
 import Svg.Attributes
+import TabIndex
 import Tuple.Extra
 import View exposing (View)
-import Void exposing (..)
 import ZxcvbnPlus
 
 
@@ -61,6 +60,9 @@ update msg model =
     case msg of
         FormUpdate formMsg ->
             let
+                form =
+                    toForm model
+
                 ( newFormState, maybeOutput ) =
                     Form.update form formMsg model.formState
 
@@ -68,6 +70,9 @@ update msg model =
                     case ( formMsg, maybeOutput ) of
                         ( Submit, Just output ) ->
                             Effect.fromCmd <| toQuery output
+
+                        ( FocusNext, _ ) ->
+                            Effect.fromCmd <| TabIndex.focusNext ()
 
                         _ ->
                             Effect.none
@@ -91,6 +96,9 @@ update msg model =
 view : Model -> View Msg
 view model =
     let
+        form =
+            toForm model
+
         fillAttr =
             [ Element.width Element.fill
             , Element.height Element.fill
@@ -166,35 +174,34 @@ page _ _ =
 
 
 type alias FormState =
-    Form.State FormError FormValue Void
+    Form.State FormError FormValue ()
 
 
 initFormState : FormState
 initFormState =
-    { value = { email = "", password = ZxcvbnPlus.zxcvbnPlus [] "", isAdmin = False, submit = False }
+    { value = { email = "", password = Form.NewPassword.initValue, isAdmin = False }
     , error = []
-    , animation = Void
+    , animation = ()
     }
 
 
 type FormError
     = EmailError String
-    | PasswordError String
-    | NoSubmit
+    | PasswordError ( Form.NewPassword.Entry, String )
 
 
 type alias FormValue =
     { email : String
-    , password : ZxcvbnPlus.ZxcvbnPlusResult
+    , password : ( ZxcvbnPlus.ZxcvbnPlusResult, String )
     , isAdmin : Bool
-    , submit : Bool
     }
 
 
 type FormMsg
     = TypeEmail String
-    | TypePassword String
+    | TypePassword ( Form.NewPassword.Entry, String )
     | ToggleIsAdmin Bool
+    | FocusNext
     | Submit
 
 
@@ -205,28 +212,12 @@ type alias FormOutput =
     }
 
 
-form : Form FormError FormValue Void FormMsg FormOutput
-form =
+toForm : Model -> Form FormError FormValue () FormMsg FormOutput
+toForm model =
     let
-        emailForm : Form FormError FormValue Void FormMsg Email
+        emailForm : Form FormError FormValue () FormMsg Email
         emailForm =
-            Form.simple
-                { parse = Email.fromString >> Result.fromMaybe "invalid email"
-                , view =
-                    \{ value, error } ->
-                        Element.Input.email
-                            [ if List.isEmpty error then
-                                noneAttribute
-
-                              else
-                                Element.Border.color (Element.rgb 1 0 0)
-                            ]
-                            { onChange = identity
-                            , text = value
-                            , placeholder = Element.Input.placeholder [] (Element.text "your@email.com") |> Just
-                            , label = Element.Input.labelAbove [] (Element.text "Email")
-                            }
-                }
+            Form.Email.form
                 |> Form.mapError
                     ( EmailError
                     , \err ->
@@ -238,73 +229,58 @@ form =
                                 Nothing
                     )
                 |> Form.mapMsg
-                    ( TypeEmail
+                    ( \msg ->
+                        case msg of
+                            Form.Email.NewVal str ->
+                                TypeEmail str
+
+                            Form.Email.OnEnter ->
+                                FocusNext
                     , \msg ->
                         case msg of
                             TypeEmail str ->
-                                Just str
+                                Just (Form.Email.NewVal str)
 
                             _ ->
                                 Nothing
                     )
                 |> Form.mapValue ( \newVal value -> { value | email = newVal }, .email )
 
-        passwordForm : Form FormError FormValue Void FormMsg String
+        passwordForm : Form FormError FormValue () FormMsg String
         passwordForm =
-            Form.complex
-                { parse =
-                    \{ password, score } ->
-                        if
-                            List.member score
-                                [ ZxcvbnPlus.TooGuessable
-                                , ZxcvbnPlus.VeryGuessable
-                                , ZxcvbnPlus.SomewhatGuessable
-                                ]
-                        then
-                            Err "Password too guessable"
-
-                        else
-                            Ok password
-                , transform =
-                    \msg { value } ->
-                        case msg of
-                            TypePassword str ->
-                                ZxcvbnPlus.zxcvbnPlus
-                                    [ "workstation", "work", "station", "ws", "42ai", "42", "ai" ]
-                                    str
-
-                            _ ->
-                                value
-                , view =
-                    \{ value, error } ->
-                        Element.Input.currentPassword
-                            [ onEnter Submit
-                            , if List.isEmpty error then
-                                noneAttribute
-
-                              else
-                                Element.Border.color (Element.rgb 1 0 0)
-                            ]
-                            { onChange = TypePassword
-                            , text = value.password
-                            , placeholder = Element.Input.placeholder [] (Element.text "yourPassword") |> Just
-                            , label = Element.Input.labelAbove [] (Element.text "Password")
-                            , show = False
-                            }
-                }
+            Form.NewPassword.form [ "workstation", "work", "station", "ws", "42ai", "42", "ai" ]
                 |> Form.mapError
                     ( PasswordError
                     , \msg ->
                         case msg of
-                            PasswordError str ->
-                                Just str
+                            PasswordError err ->
+                                Just err
 
                             _ ->
                                 Nothing
                     )
                 |> Form.mapValue ( \newVal value -> { value | password = newVal }, .password )
+                |> Form.mapMsg
+                    ( \( entry, msg ) ->
+                        case ( entry, msg ) of
+                            ( _, Form.NewPassword.NewVal str ) ->
+                                TypePassword ( entry, str )
 
-        isAdmin : Form FormError FormValue Void FormMsg Bool
+                            ( Form.NewPassword.First, Form.NewPassword.OnEnter ) ->
+                                FocusNext
+
+                            ( Form.NewPassword.Confirmation, Form.NewPassword.OnEnter ) ->
+                                Submit
+                    , \msg ->
+                        case msg of
+                            TypePassword ( entry, str ) ->
+                                Just ( entry, Form.NewPassword.NewVal str )
+
+                            _ ->
+                                Nothing
+                    )
+
+        isAdmin : Form FormError FormValue () FormMsg Bool
         isAdmin =
             Form.simple
                 { parse = Ok
@@ -353,51 +329,35 @@ form =
                     )
                 |> Form.mapValue ( \newVal value -> { value | isAdmin = newVal }, .isAdmin )
 
-        submitButton : Form FormError FormValue Void FormMsg Void
         submitButton =
-            Form.complex
-                { parse =
-                    \value ->
-                        if value then
-                            Ok Void
+            Element.Input.button
+                [ Element.alignRight
+                , Element.padding 7
+                , Element.Background.color
+                    (if model.formOutput == Nothing then
+                        Element.rgb 0.6 0.6 0.6
 
-                        else
-                            Err NoSubmit
-                , transform =
-                    \msg _ ->
-                        case msg of
-                            Submit ->
-                                True
+                     else
+                        Element.rgb 0.85 0 0
+                    )
+                , Element.Font.color (Element.rgb 1 1 1)
+                , Element.Font.bold
+                , Element.Border.rounded 3
+                ]
+                { onPress =
+                    if model.formOutput == Nothing then
+                        Nothing
 
-                            _ ->
-                                False
-                , view =
-                    \{ value } ->
-                        Element.Input.button
-                            [ Element.alignRight
-                            , Element.padding 7
-                            , Element.Background.color
-                                (if value then
-                                    Element.rgb 0.85 0 0
-
-                                 else
-                                    Element.rgb 0.6 0.6 0.6
-                                )
-                            , Element.Font.color (Element.rgb 1 1 1)
-                            , Element.Font.bold
-                            , Element.Border.rounded 3
-                            ]
-                            { onPress = Just Submit
-                            , label = Element.text "Create"
-                            }
+                    else
+                        Just Submit
+                , label = Element.text "Create User"
                 }
-                |> Form.mapValue ( \newVal value -> { value | submit = newVal }, .submit )
     in
     Form.succeed FormOutput
         |> Form.append emailForm
         |> Form.append passwordForm
         |> Form.append isAdmin
-        |> Form.add submitButton
+        |> (\form -> { form | view = \state -> form.view state ++ [ submitButton ] })
 
 
 
@@ -443,34 +403,3 @@ toQuery { email, password } =
         )
         |> Graphql.Http.queryRequest Shared.apiUrl
         |> Graphql.Http.send handleHttpErrors
-
-
-
--- ██╗   ██╗████████╗██╗██╗
--- ██║   ██║╚══██╔══╝██║██║
--- ██║   ██║   ██║   ██║██║
--- ██║   ██║   ██║   ██║██║
--- ╚██████╔╝   ██║   ██║███████╗
---  ╚═════╝    ╚═╝   ╚═╝╚══════╝
-
-
-noneAttribute : Element.Attribute msg
-noneAttribute =
-    Element.htmlAttribute (Html.Attributes.classList [])
-
-
-onEnter : msg -> Element.Attribute msg
-onEnter msg =
-    Element.htmlAttribute
-        (Html.Events.on "keyup"
-            (Decode.field "key" Decode.string
-                |> Decode.andThen
-                    (\key ->
-                        if key == "Enter" then
-                            Decode.succeed msg
-
-                        else
-                            Decode.fail "Not the enter key"
-                    )
-            )
-        )
